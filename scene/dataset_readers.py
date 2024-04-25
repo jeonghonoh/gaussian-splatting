@@ -112,6 +112,58 @@ def fetchPly(path):
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
+import trimesh
+
+def fetchGlb(path):
+    scene = trimesh.load(path)
+    mesh = scene.geometry
+    #ordered dictionary each key print
+    # for key in mesh:
+    #     print(f"Key: {key}")
+    #     print(f"Geometry Type: {type(mesh[key])}")
+    #     print(f"Geometry: {mesh[key]}")
+    
+    #extract pointcloud (pose)
+    for key in mesh:
+        if type(mesh[key]) == trimesh.PointCloud:
+            #extract pose
+            point_cloud = mesh[key]
+            # print("point_cloud: ", point_cloud)
+            xyz = point_cloud.vertices
+            # print("pose shape: ", xyz.shape)
+            # print("pose: ", xyz)
+            if point_cloud.colors is not None:
+                colors = point_cloud.colors
+                # print("colors shape: ", point_cloud.colors.shape)
+                # print("colors: ", colors)
+            else:
+                print("No colors")
+            #이건 color 관련 버그가 있어서 임시로 넣은 코드, 나중에 제거
+            if colors.shape != xyz.shape:
+                colors = np.zeros_like(xyz)
+    return BasicPointCloud(points=xyz, colors=colors, normals=np.zeros_like(xyz))
+
+def fetchPointcloud(path):
+    cloud = trimesh.load(path, process=False)
+    if isinstance(cloud, trimesh.PointCloud):
+        # 점의 좌표(XYZ) 출력
+        # print("Points (XYZ coordinates):\n", cloud.vertices)
+        poses = cloud.vertices
+        # 색상 정보 접근 및 출력
+        if hasattr(cloud, 'colors') and cloud.colors is not None:
+            # print("Colors (RGBA values):\n", cloud.colors)
+            colors = cloud.colors
+            if colors.shape[1] == 4:
+                colors = colors[:, :3]
+        else:
+            print("No color data available.")
+    else:
+        print("Loaded data is not a point cloud.")
+    
+    assert poses.shape == colors.shape, "Poses and colors shape mismatch!"
+
+    return BasicPointCloud(points=poses, colors=colors, normals=np.zeros_like(poses))
+
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
@@ -129,6 +181,99 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
+def read_extrinsics_text_for_dust3r(path):
+    images = {}
+    with open(path) as f:
+        lines = f.readlines()
+        assert len(lines) != 0, "No extrinsics found in file!"
+        assert len(lines) % 5 == 0, "Extrinsics file not formatted correctly!"
+        for i in range(0, len(lines), 5):
+            image_name = lines[i].split(" ")[0]
+            extr = np.zeros((4, 4))
+            for j in range(4):
+                lines[i+1+j] = lines[i+1+j].split(" ")
+                extr[j, 0] = float(lines[i+1+j][0])
+                extr[j, 1] = float(lines[i+1+j][1])
+                extr[j, 2] = float(lines[i+1+j][2])
+                extr[j, 3] = float(lines[i+1+j][3])
+            images[image_name] = extr
+    return images
+
+def read_intrinsics_text_for_dust3r(path):
+    images = {}
+    with open(path) as f:
+        lines = f.readlines()
+        assert len(lines) != 0, "No intrinsics found in file!"
+        assert len(lines) % 4 == 0, "Intrinsics file not formatted correctly!"
+        for i in range(0, len(lines), 4):
+            image_name = lines[i].split(" ")[0]
+            intr = np.zeros((3, 3))
+            for j in range(3):
+                lines[i+1+j] = lines[i+1+j].split(" ")
+                intr[j, 0] = float(lines[i+1+j][0])
+                intr[j, 1] = float(lines[i+1+j][1])
+                intr[j, 2] = float(lines[i+1+j][2])
+            images[image_name] = intr
+    return images
+
+
+def readDust3rSceneInfo(path, eval):
+    glb_path = os.path.join(path, "dust3r", "scene.glb")
+    cam_extrinsics_file = os.path.join(path, "dust3r", "extrinsics.txt")
+    cam_intrinsics_file = os.path.join(path, "dust3r", "intrinsics.txt")
+    cam_extrinsics = read_extrinsics_text_for_dust3r(cam_extrinsics_file)
+    cam_intrinsics = read_intrinsics_text_for_dust3r(cam_intrinsics_file)
+
+    try:
+        pcd = fetchGlb(glb_path)
+    except:
+        pcd = None
+        print("Could not find point cloud file, will not load point cloud.")
+        print("Point cloud file should be located at: ", glb_path)
+    
+    cam_infos = []
+    assert len(cam_extrinsics) == len(cam_intrinsics), "Number of cameras and intrinsics do not match!"
+    for idx, key in enumerate(cam_extrinsics):
+        sys.stdout.write('\r')
+        # the exact output you're looking for:
+        sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
+        sys.stdout.flush()
+
+        extr = cam_extrinsics[key]
+        intr = cam_intrinsics[key]
+
+        R = extr[:3, :3]
+        T = extr[:3, 3:4].flatten()
+
+        FovY = intr[1, 1]
+        FovX = intr[0, 0]
+
+        if key.endswith("\n"):
+            key = key[:-1]
+        image_path = os.path.join(path, "input", key)
+        image_name = key.split(".")[0]
+        image = Image.open(image_path)
+
+        cam_info = CameraInfo(uid=1, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                              image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1])
+        cam_infos.append(cam_info)
+
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 8 != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % 8 == 0]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+    
+    scene_info = SceneInfo(point_cloud=pcd,
+                            train_cameras=train_cam_infos,
+                            test_cameras=test_cam_infos,
+                            nerf_normalization=getNerfppNorm(train_cam_infos),
+                            ply_path=glb_path)
+    return scene_info
+   
+
+
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
@@ -141,10 +286,14 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
+    # print("Cameras length: ", len(cam_extrinsics), " ", len(cam_intrinsics))
+    # print("Cameras intrinsics: ", cam_intrinsics)
+    # print("Cameras extrinsics[0]: ", cam_extrinsics[0])
+
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-
+    print("cam_infos: ", cam_infos)
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
@@ -256,5 +405,6 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "Dust3D": readDust3rSceneInfo
 }
