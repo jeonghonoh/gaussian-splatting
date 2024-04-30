@@ -406,5 +406,5 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
-    "Dust3D": readDust3rSceneInfo
+    "Dust3r": readDust3rSceneInfo
 }
