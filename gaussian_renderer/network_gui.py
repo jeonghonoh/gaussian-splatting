@@ -15,9 +15,7 @@ import socket
 import json
 from scene.cameras import MiniCam
 
-# host = "127.0.0.1"
-host = "147.46.117.222"
-# remote = "147.46.117.222"
+host = "127.0.0.1"
 port = 6009
 
 conn = None
