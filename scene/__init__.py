@@ -40,10 +40,10 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if args.type == "Dust3r" and os.path.exists(os.path.join(args.source_path, "dust3r")):
-            print("Found dust3r folder, assuming Dust3D data set!")
-            scene_info = sceneLoadTypeCallbacks["Dust3r"](args.source_path, args.eval)
-        elif os.path.exists(os.path.join(args.source_path, "sparse")):
+        # if os.path.exists(os.path.join(args.source_path, "dust3r")):
+        #     print("Found dust3r folder, assuming Dust3D data set!")
+        #     scene_info = sceneLoadTypeCallbacks["Dust3r"](args.source_path, args.eval)
+        if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
